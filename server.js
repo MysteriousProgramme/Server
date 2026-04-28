@@ -1,87 +1,76 @@
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
+require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Render provides the database URL in the environment variables
+// Connect to Render's Postgres database
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
+    ssl: { rejectUnauthorized: false } // Required for Render DB connections
 });
 
-// Auto-initialize tables when the server starts
+// Auto-initialize tables if they don't exist
 const initDB = async () => {
-    await pool.query(`
-        CREATE TABLE IF NOT EXISTS allowed_guilds (guild_name VARCHAR(50) PRIMARY KEY);
-        CREATE TABLE IF NOT EXISTS staff_players (player_name VARCHAR(50) PRIMARY KEY);
-    `);
-    console.log("Database tables verified.");
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS allowed_guilds (guild_name VARCHAR(50) PRIMARY KEY);`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS staff_players (player_name VARCHAR(50) PRIMARY KEY);`);
+        console.log("Database tables verified.");
+    } catch (err) {
+        console.error("DB Init Error:", err);
+    }
 };
 initDB();
 
-// 1. Authenticate Player
-app.post('/api/auth', async (req, res) => {
-    const { playerName, guildWords } = req.body;
-    
+// 1. Authenticate Player & Fetch Data
+app.get('/api/auth/:playerName', async (req, res) => {
+    const { playerName } = req.params;
     try {
-        // Check if the player is staff
-        const staffRes = await pool.query('SELECT * FROM staff_players WHERE player_name = $1', [playerName]);
-        const isStaff = staffRes.rowCount > 0;
-
-        let isWhitelisted = isStaff; // Staff always get access
-
-        // Check if any of the parsed words from their "g who" message matches an allowed guild
-        if (!isWhitelisted && guildWords && guildWords.length > 0) {
-            const guildRes = await pool.query('SELECT guild_name FROM allowed_guilds WHERE guild_name = ANY($1)', [guildWords]);
-            if (guildRes.rowCount > 0) isWhitelisted = true;
-        }
-
-        res.json({ isWhitelisted, isStaff });
+        const staffRes = await pool.query('SELECT * FROM staff_players WHERE LOWER(player_name) = LOWER($1)', [playerName]);
+        const guildsRes = await pool.query('SELECT guild_name FROM allowed_guilds');
+        
+        res.json({
+            isStaff: staffRes.rowCount > 0,
+            allowedGuilds: guildsRes.rows.map(row => row.guild_name.toLowerCase())
+        });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Database error" });
     }
 });
 
-// 2. Fetch Allowed Guilds (For the Access Tab)
-app.get('/api/guilds', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT guild_name FROM allowed_guilds ORDER BY guild_name ASC');
-        res.json(result.rows.map(row => row.guild_name));
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// 3. Add a Guild (Requires Staff)
+// 2. Add a Guild (Staff Action)
 app.post('/api/guilds', async (req, res) => {
-    const { playerName, guildName } = req.body;
+    const { guildName, staffName } = req.body;
     try {
-        const staffRes = await pool.query('SELECT * FROM staff_players WHERE player_name = $1', [playerName]);
+        // Verify the user making the request is actually staff
+        const staffRes = await pool.query('SELECT * FROM staff_players WHERE LOWER(player_name) = LOWER($1)', [staffName]);
         if (staffRes.rowCount === 0) return res.status(403).json({ error: "Unauthorized" });
 
         await pool.query('INSERT INTO allowed_guilds (guild_name) VALUES ($1) ON CONFLICT DO NOTHING', [guildName.toLowerCase()]);
-        res.json({ success: true });
+        res.json({ success: true, message: `Added ${guildName}` });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Database error" });
     }
 });
 
-// 4. Remove a Guild (Requires Staff)
-app.delete('/api/guilds/:name', async (req, res) => {
-    const { playerName } = req.body;
+// 3. Remove a Guild (Staff Action)
+app.delete('/api/guilds/:guildName', async (req, res) => {
+    const { guildName } = req.params;
+    const staffName = req.headers['staff-name']; // Passed in headers for DELETE requests
+    
     try {
-        const staffRes = await pool.query('SELECT * FROM staff_players WHERE player_name = $1', [playerName]);
+        const staffRes = await pool.query('SELECT * FROM staff_players WHERE LOWER(player_name) = LOWER($1)', [staffName]);
         if (staffRes.rowCount === 0) return res.status(403).json({ error: "Unauthorized" });
 
-        await pool.query('DELETE FROM allowed_guilds WHERE guild_name = $1', [req.params.name.toLowerCase()]);
-        res.json({ success: true });
+        await pool.query('DELETE FROM allowed_guilds WHERE LOWER(guild_name) = LOWER($1)', [guildName]);
+        res.json({ success: true, message: `Removed ${guildName}` });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: "Database error" });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
