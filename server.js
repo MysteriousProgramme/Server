@@ -7,17 +7,24 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Connect to Render's Postgres database
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false } // Required for Render DB connections
+    ssl: { rejectUnauthorized: false } 
 });
 
-// Auto-initialize tables if they don't exist
 const initDB = async () => {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS allowed_guilds (guild_name VARCHAR(50) PRIMARY KEY);`);
         await pool.query(`CREATE TABLE IF NOT EXISTS staff_players (player_name VARCHAR(50) PRIMARY KEY);`);
+        
+        // --- NEW: Table for Player Head/Skin Data ---
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS player_heads (
+                player_name VARCHAR(50) PRIMARY KEY,
+                texture_value TEXT NOT NULL,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
         console.log("Database tables verified.");
     } catch (err) {
         console.error("DB Init Error:", err);
@@ -68,6 +75,52 @@ app.delete('/api/guilds/:guildName', async (req, res) => {
         await pool.query('DELETE FROM allowed_guilds WHERE LOWER(guild_name) = LOWER($1)', [guildName]);
         res.json({ success: true, message: `Removed ${guildName}` });
     } catch (err) {
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// ... [Existing /api/auth and /api/guilds endpoints] ...
+
+// --- NEW: Store Player Head Data ---
+app.post('/api/heads', async (req, res) => {
+    const { playerName, textureValue } = req.body;
+    
+    if (!playerName || !textureValue) {
+        return res.status(400).json({ error: "Missing playerName or textureValue" });
+    }
+
+    try {
+        // Inserts the new head data, or updates it if the player already exists in the table
+        await pool.query(`
+            INSERT INTO player_heads (player_name, texture_value, last_updated) 
+            VALUES ($1, $2, CURRENT_TIMESTAMP)
+            ON CONFLICT (player_name) 
+            DO UPDATE SET texture_value = EXCLUDED.texture_value, last_updated = CURRENT_TIMESTAMP
+        `, [playerName.toLowerCase(), textureValue]);
+        
+        res.json({ success: true, message: `Stored head data for ${playerName}` });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// --- NEW: Retrieve Player Head Data ---
+app.get('/api/heads/:playerName', async (req, res) => {
+    const { playerName } = req.params;
+    try {
+        const result = await pool.query(
+            'SELECT texture_value, last_updated FROM player_heads WHERE LOWER(player_name) = LOWER($1)', 
+            [playerName]
+        );
+        
+        if (result.rowCount > 0) {
+            res.json({ success: true, data: result.rows[0] });
+        } else {
+            res.status(404).json({ error: "Head data not found" });
+        }
+    } catch (err) {
+        console.error(err);
         res.status(500).json({ error: "Database error" });
     }
 });
