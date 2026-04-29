@@ -16,8 +16,6 @@ const initDB = async () => {
     try {
         await pool.query(`CREATE TABLE IF NOT EXISTS allowed_guilds (guild_name VARCHAR(50) PRIMARY KEY);`);
         await pool.query(`CREATE TABLE IF NOT EXISTS staff_players (player_name VARCHAR(50) PRIMARY KEY);`);
-        
-        // --- NEW: Table for Player Head/Skin Data ---
         await pool.query(`
             CREATE TABLE IF NOT EXISTS player_heads (
                 player_name VARCHAR(50) PRIMARY KEY,
@@ -25,11 +23,18 @@ const initDB = async () => {
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
-        console.log("Database tables verified.");
+        console.log("Database tables verified successfully.");
+        
+        // Start the server ONLY after the tables are confirmed
+        const PORT = process.env.PORT || 3000;
+        app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
+
     } catch (err) {
-        console.error("DB Init Error:", err);
+        console.error("FATAL: DB Init Error. Check your DATABASE_URL.", err);
     }
 };
+
+// Call the function, but remove the app.listen() from the very bottom of your file!
 initDB();
 
 // 1. Authenticate Player & Fetch Data
