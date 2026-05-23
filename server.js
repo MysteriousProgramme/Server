@@ -19,7 +19,7 @@ const initDB = async () => {
         await pool.query(`CREATE TABLE IF NOT EXISTS allowed_guilds (guild_name VARCHAR(50) PRIMARY KEY);`);
         await pool.query(`CREATE TABLE IF NOT EXISTS staff_players (player_name VARCHAR(50) PRIMARY KEY);`);
         
-        // NEW: 24-Hour Cache Table
+        // 24-Hour Cache Table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS guild_cache (
                 guild_name VARCHAR(50) PRIMARY KEY,
@@ -80,13 +80,10 @@ app.delete('/api/guilds/:guildName', async (req, res) => {
     }
 });
 
-// --- NEW CACHE ENDPOINTS ---
-
 // 4. Fetch Roster (Checks Cache Age)
 app.get('/api/roster/:guildName', async (req, res) => {
     const { guildName } = req.params;
     try {
-        // Extract difference in seconds from last update
         const result = await pool.query(
             `SELECT roster, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - last_updated)) AS age_seconds 
              FROM guild_cache WHERE LOWER(guild_name) = LOWER($1)`,
@@ -108,6 +105,9 @@ app.get('/api/roster/:guildName', async (req, res) => {
 // 5. Upload/Update Roster
 app.post('/api/roster', async (req, res) => {
     const { guildName, roster } = req.body;
+    
+    console.log(`[Backend] Received roster upload for '${guildName}'. Player count: ${roster ? roster.length : 0}`);
+
     try {
         await pool.query(
             `INSERT INTO guild_cache (guild_name, roster, last_updated) 
@@ -116,8 +116,10 @@ app.post('/api/roster', async (req, res) => {
              SET roster = EXCLUDED.roster, last_updated = CURRENT_TIMESTAMP`,
             [guildName, JSON.stringify(roster)]
         );
+        console.log(`[Backend] Successfully saved '${guildName}' to database.`);
         res.json({ success: true });
     } catch (err) {
+        console.error(`[Backend] Database error saving '${guildName}':`, err);
         res.status(500).json({ error: "Database error" });
     }
 });
