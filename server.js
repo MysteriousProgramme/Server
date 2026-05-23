@@ -7,10 +7,13 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// Connect to Postgres database
+// Automatically disables SSL if connecting to localhost, enables it for cloud (Render)
+// Connect to Postgres database
 // Connect to Render's Postgres database
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false } // Required for Render DB connections
+    ssl: { rejectUnauthorized: false } 
 });
 
 // Auto-initialize tables if they don't exist
