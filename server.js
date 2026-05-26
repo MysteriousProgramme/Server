@@ -27,6 +27,15 @@ const initDB = async () => {
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // NEW: Sessions Table for Discord Bot
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS sessions_cache (
+                session_id VARCHAR(50) PRIMARY KEY,
+                session_data JSONB,
+                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
         console.log("Database tables verified.");
     } catch (err) {
         console.error("DB Init Error:", err);
@@ -120,6 +129,45 @@ app.post('/api/roster', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error(`[Backend] Database error saving '${guildName}':`, err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// 6. Upload Session (From Mod)
+app.post('/api/sessions', async (req, res) => {
+    const { sessionId, sessionData } = req.body;
+    
+    if (!sessionId || !sessionData) {
+        return res.status(400).json({ error: "Missing sessionId or sessionData" });
+    }
+
+    try {
+        await pool.query(
+            `INSERT INTO sessions_cache (session_id, session_data, last_updated) 
+             VALUES ($1, $2::jsonb, CURRENT_TIMESTAMP)
+             ON CONFLICT (session_id) DO UPDATE 
+             SET session_data = EXCLUDED.session_data, last_updated = CURRENT_TIMESTAMP`,
+            [sessionId, JSON.stringify(sessionData)]
+        );
+        console.log(`[Backend] Successfully uploaded session: ${sessionId}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(`[Backend] Error saving session ${sessionId}:`, err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// 7. Fetch Session (For Discord Bot)
+app.get('/api/sessions/:sessionId', async (req, res) => {
+    const { sessionId } = req.params;
+    try {
+        const result = await pool.query('SELECT session_data FROM sessions_cache WHERE session_id = $1', [sessionId]);
+        if (result.rowCount > 0) {
+            res.json(result.rows[0].session_data);
+        } else {
+            res.status(404).json({ error: "Session not found" });
+        }
+    } catch (err) {
         res.status(500).json({ error: "Database error" });
     }
 });
