@@ -274,7 +274,7 @@ app.get('/api/v1/sessions/:id', async (req, res) => {
 // 11. Fetch Leaderboard for a Session (Supports ?top= amount and adds medal colors)
 app.get('/api/v1/sessions/:id/leaderboard', async (req, res) => {
     const { id } = req.params;
-    const topLimit = parseInt(req.query.top) || 0; // 0 means return everyone
+    const topLimit = parseInt(req.query.top) || 0; 
     
     try {
         const result = await pool.query('SELECT session_data FROM sessions_cache WHERE session_id = $1', [id]);
@@ -286,10 +286,8 @@ app.get('/api/v1/sessions/:id/leaderboard', async (req, res) => {
         const sessionData = result.rows[0].session_data;
         const playersObj = sessionData.players || {};
         
-        // Convert players object to an array to sort
         let playersArray = Object.values(playersObj);
         
-        // Sort primarily by highest Kills, secondarily by lowest Deaths
         playersArray.sort((a, b) => {
             if (b.kills !== a.kills) return b.kills - a.kills;
             return a.deaths - b.deaths;
@@ -299,21 +297,20 @@ app.get('/api/v1/sessions/:id/leaderboard', async (req, res) => {
             playersArray = playersArray.slice(0, topLimit);
         }
         
-        // Map and assign colors/medals to the top 3
         const leaderboard = playersArray.map((p, index) => {
             const rank = index + 1;
             let medal = "none";
-            let colorCode = "§f"; // Default Minecraft white
+            let colorCode = "§f"; 
             
             if (rank === 1) { 
                 medal = "gold"; 
-                colorCode = "§6"; // Gold
+                colorCode = "§6"; 
             } else if (rank === 2) { 
                 medal = "silver"; 
-                colorCode = "§7"; // Gray/Silver
+                colorCode = "§7"; 
             } else if (rank === 3) { 
                 medal = "bronze"; 
-                colorCode = "§c"; // Red/Bronze
+                colorCode = "§c"; 
             }
             
             return {
@@ -358,7 +355,6 @@ app.get('/api/v1/sessions/:id/active', async (req, res) => {
             return a.deaths - b.deaths;
         });
         
-        // Slice top 10 for live feed polling
         const top10 = playersArray.slice(0, 10).map((p, index) => {
             const rank = index + 1;
             return {
@@ -378,6 +374,18 @@ app.get('/api/v1/sessions/:id/active', async (req, res) => {
         });
     } catch (err) {
         console.error(`[Public API] Error fetching live active session ${id}:`, err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// 13. Remove Live Session (Auto-cleanup when stopping track)
+app.delete('/api/sessions/live/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        await pool.query('DELETE FROM sessions_cache WHERE session_id = $1', [id]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(`[Backend] Error auto-deleting live session ${id}:`, err);
         res.status(500).json({ error: "Database error" });
     }
 });
