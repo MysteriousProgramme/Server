@@ -55,4 +55,38 @@ router.get('/sessions', async (req, res) => {
     }
 });
 
+// DELETE /api/v1/sessions/:id
+// Requires a valid staff name in the headers
+router.delete('/sessions/:id', async (req, res) => {
+    const { id } = req.params;
+    const staffName = req.headers['staff-name'];
+
+    if (!staffName) {
+        return res.status(400).json({ error: "Missing staff-name header" });
+    }
+
+    try {
+        // 1. Verify the user requesting the deletion is actually Staff
+        const staffRes = await pool.query('SELECT * FROM staff_players WHERE LOWER(player_name) = LOWER($1)', [staffName]);
+        
+        if (staffRes.rowCount === 0) {
+            return res.status(403).json({ error: "Unauthorized: Only staff members can delete API sessions." });
+        }
+
+        // 2. Delete the session from the database
+        const deleteRes = await pool.query('DELETE FROM sessions_cache WHERE session_id = $1', [id]);
+
+        if (deleteRes.rowCount > 0) {
+            console.log(`[Public API] Session ${id} deleted by staff member ${staffName}`);
+            res.json({ success: true, message: `Session ${id} successfully deleted.` });
+        } else {
+            res.status(404).json({ error: "Session not found." });
+        }
+
+    } catch (err) {
+        console.error(`[Public API] Error deleting session ${id}:`, err);
+        res.status(500).json({ error: "Database error deleting session" });
+    }
+});
+
 module.exports = router;
