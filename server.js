@@ -245,6 +245,9 @@ app.delete('/api/v1/sessions/:id', async (req, res) => {
 
         const deleteRes = await pool.query('DELETE FROM sessions_cache WHERE session_id = $1', [id]);
 
+        // Auto-clear the global broadcast if it pointed at this session
+        await pool.query('UPDATE global_broadcast SET session_id = NULL WHERE session_id = $1', [id]);
+
         if (deleteRes.rowCount > 0) {
             console.log(`[Public API] Session ${id} deleted by staff member ${staffName}`);
             res.json({ success: true, message: `Session ${id} successfully deleted.` });
@@ -260,11 +263,11 @@ app.delete('/api/v1/sessions/:id', async (req, res) => {
 
 // ==========================================
 // GLOBAL BROADCAST ROUTES
-// NOTE: These are declared BEFORE the "/api/v1/sessions/:id" GET routes below so that
-// "/api/v1/global" is never mistaken for a session id. (Express matches in declaration order.)
+// Declared BEFORE "/api/v1/sessions/:id" GET routes so "/api/v1/global"
+// is never captured as a session id. (Express matches in declaration order.)
 // ==========================================
 
-// 9b. Set the global broadcast (Staff Action)
+// 9b. Set the global broadcast (Staff only)
 app.post('/api/v1/global/:id', async (req, res) => {
     const { id } = req.params;
     const staffName = req.headers['staff-name'];
@@ -287,7 +290,7 @@ app.post('/api/v1/global/:id', async (req, res) => {
     }
 });
 
-// 9c. Clear the global broadcast (Staff Action)
+// 9c. Clear the global broadcast (Staff only) — turns everyone's HUD off
 app.delete('/api/v1/global', async (req, res) => {
     const staffName = req.headers['staff-name'];
     if (!staffName) return res.status(400).json({ error: "Missing staff-name header" });
@@ -305,7 +308,9 @@ app.delete('/api/v1/global', async (req, res) => {
     }
 });
 
-// 9d. Get the active global broadcast (Public — polled by every client every 10s)
+// 9d. Get the active global broadcast (Public — polled by every client every 10s).
+// Returns { active:false } when nothing is broadcast OR the session no longer exists,
+// which is how clients know to remove the HUD.
 app.get('/api/v1/global', async (req, res) => {
     try {
         const gb = await pool.query('SELECT session_id FROM global_broadcast WHERE id = 1');
@@ -456,6 +461,10 @@ app.delete('/api/sessions/live/:id', async (req, res) => {
     const { id } = req.params;
     try {
         await pool.query('DELETE FROM sessions_cache WHERE session_id = $1', [id]);
+
+        // Auto-clear the global broadcast if it pointed at this session
+        await pool.query('UPDATE global_broadcast SET session_id = NULL WHERE session_id = $1', [id]);
+
         res.json({ success: true });
     } catch (err) {
         console.error(`[Backend] Error auto-deleting live session ${id}:`, err);
