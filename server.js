@@ -38,6 +38,15 @@ const initDB = async () => {
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // Global Broadcast Table (single row, id = 1)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS global_broadcast (
+                id INT PRIMARY KEY DEFAULT 1,
+                session_id VARCHAR(50)
+            );
+        `);
+
         console.log("Database tables verified.");
     } catch (err) {
         console.error("DB Init Error:", err);
@@ -249,6 +258,70 @@ app.delete('/api/v1/sessions/:id', async (req, res) => {
     }
 });
 
+// ==========================================
+// GLOBAL BROADCAST ROUTES
+// NOTE: These are declared BEFORE the "/api/v1/sessions/:id" GET routes below so that
+// "/api/v1/global" is never mistaken for a session id. (Express matches in declaration order.)
+// ==========================================
+
+// 9b. Set the global broadcast (Staff Action)
+app.post('/api/v1/global/:id', async (req, res) => {
+    const { id } = req.params;
+    const staffName = req.headers['staff-name'];
+    if (!staffName) return res.status(400).json({ error: "Missing staff-name header" });
+
+    try {
+        const staffRes = await pool.query('SELECT * FROM staff_players WHERE LOWER(player_name) = LOWER($1)', [staffName]);
+        if (staffRes.rowCount === 0) return res.status(403).json({ error: "Unauthorized" });
+
+        await pool.query(
+            `INSERT INTO global_broadcast (id, session_id) VALUES (1, $1)
+             ON CONFLICT (id) DO UPDATE SET session_id = EXCLUDED.session_id`,
+            [id]
+        );
+        console.log(`[Global] Broadcast set to session ${id} by ${staffName}`);
+        res.json({ success: true, sessionId: id });
+    } catch (err) {
+        console.error("[Global] set error:", err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// 9c. Clear the global broadcast (Staff Action)
+app.delete('/api/v1/global', async (req, res) => {
+    const staffName = req.headers['staff-name'];
+    if (!staffName) return res.status(400).json({ error: "Missing staff-name header" });
+
+    try {
+        const staffRes = await pool.query('SELECT * FROM staff_players WHERE LOWER(player_name) = LOWER($1)', [staffName]);
+        if (staffRes.rowCount === 0) return res.status(403).json({ error: "Unauthorized" });
+
+        await pool.query('UPDATE global_broadcast SET session_id = NULL WHERE id = 1');
+        console.log(`[Global] Broadcast cleared by ${staffName}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("[Global] clear error:", err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
+// 9d. Get the active global broadcast (Public — polled by every client every 10s)
+app.get('/api/v1/global', async (req, res) => {
+    try {
+        const gb = await pool.query('SELECT session_id FROM global_broadcast WHERE id = 1');
+        const sessionId = gb.rowCount > 0 ? gb.rows[0].session_id : null;
+        if (!sessionId) return res.json({ active: false });
+
+        const sess = await pool.query('SELECT session_data FROM sessions_cache WHERE session_id = $1', [sessionId]);
+        if (sess.rowCount === 0) return res.json({ active: false });
+
+        res.json({ active: true, sessionId, sessionData: sess.rows[0].session_data });
+    } catch (err) {
+        console.error("[Global] get error:", err);
+        res.status(500).json({ error: "Database error" });
+    }
+});
+
 // 10. Fetch Single Specific Session
 app.get('/api/v1/sessions/:id', async (req, res) => {
     const { id } = req.params;
@@ -300,17 +373,17 @@ app.get('/api/v1/sessions/:id/leaderboard', async (req, res) => {
         const leaderboard = playersArray.map((p, index) => {
             const rank = index + 1;
             let medal = "none";
-            let colorCode = "§f"; 
+            let colorCode = "Â§f"; 
             
             if (rank === 1) { 
                 medal = "gold"; 
-                colorCode = "§6"; 
+                colorCode = "Â§6"; 
             } else if (rank === 2) { 
                 medal = "silver"; 
-                colorCode = "§7"; 
+                colorCode = "Â§7"; 
             } else if (rank === 3) { 
                 medal = "bronze"; 
-                colorCode = "§c"; 
+                colorCode = "Â§c"; 
             }
             
             return {
